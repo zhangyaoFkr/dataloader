@@ -42,6 +42,7 @@ export type CacheMap<K, V> = {
  */
 class DataLoader<K, V> {
   constructor(
+    // batchLoadFn 接受 keys[], return Promise[]
     batchLoadFn: BatchLoadFn<K, V>,
     options?: Options<K, V>
   ) {
@@ -53,6 +54,7 @@ class DataLoader<K, V> {
     }
     this._batchLoadFn = batchLoadFn;
     this._options = options;
+    // 获取存储对象
     this._promiseCache = getValidCacheMap(options);
     this._queue = [];
   }
@@ -79,36 +81,50 @@ class DataLoader<K, V> {
     var shouldBatch = !options || options.batch !== false;
     var shouldCache = !options || options.cache !== false;
     var cacheKeyFn = options && options.cacheKeyFn;
+    // 可以使用 cacheKeyFn 自定义 cacheKey
+    // 比如当你的 key 是一个对象你想用其中的某个字段时 || 你想把 key 做些处理
     var cacheKey = cacheKeyFn ? cacheKeyFn(key) : key;
 
     // If caching and there is a cache-hit, return cached Promise.
+    // 如果可以使用缓存
     if (shouldCache) {
+      // 使用 catchKey 获取缓存
       var cachedPromise = this._promiseCache.get(cacheKey);
+      // 如果有缓存的 value 返回该 value: Promise
       if (cachedPromise) {
         return cachedPromise;
       }
     }
 
     // Otherwise, produce a new Promise for this value.
+    // 如果没有缓存, 把这个 value 用 Promise 包装起来
     var promise = new Promise((resolve, reject) => {
       // Enqueue this Promise to be dispatched.
+      // 把要获取的 key 和 Promise 的 resolve & reject 方法放入 queue 中
+      // 通过 batchLoadFn & key 就可以获取到该 key 对应的方法, 然后返回给上层
+      // 当 queue 中的 Promise resolve | reject 时 就会调用 load().then 继续执行
       this._queue.push({ key, resolve, reject });
-
       // Determine if a dispatch of this queue should be scheduled.
       // A single dispatch should be scheduled per queue at the time when the
       // queue changes from "empty" to "full".
+      // 这里我的理解是 当调用了 load 方法, 这里必然长度是 1, 而 dispatchQueue 会把当前的 queue 消化掉 (queue 中可能有多个)
+      // 但是 load 肯定是一个一个执行的
+      // 所以如果开启了批处理, 在一个时钟周期 (事件循环) 内加入 queue 的都会被处理, 从而达到了 '批' 的目的
       if (this._queue.length === 1) {
+        // 在 node 的下一个时钟周期 nextTick (setImmediate | setTimeout) 去把队里中的东西处理
         if (shouldBatch) {
           // If batching, schedule a task to dispatch the queue.
           enqueuePostPromiseJob(() => dispatchQueue(this));
         } else {
           // Otherwise dispatch the (queue of one) immediately.
+          // 因为 node 是单线程的, 所以来一个触发一次, 不会积累到 queue 中
           dispatchQueue(this);
         }
       }
     });
 
     // If caching, cache this promise.
+    // 如果允许缓存, 则缓存, 下次再用同样的 cacheKey 就可以 get 到了
     if (shouldCache) {
       this._promiseCache.set(cacheKey, promise);
     }
@@ -169,6 +185,7 @@ class DataLoader<K, V> {
     var cacheKey = cacheKeyFn ? cacheKeyFn(key) : key;
 
     // Only add the key if it does not already exist.
+    // 不会改变 key 已经存在的值
     if (this._promiseCache.get(cacheKey) === undefined) {
       // Cache a rejected promise if the value is an Error, in order to match
       // the behavior of load(key).
@@ -227,10 +244,12 @@ var resolvedPromise;
 function dispatchQueue<K, V>(loader: DataLoader<K, V>) {
   // Take the current loader queue, replacing it with an empty queue.
   var queue = loader._queue;
+  // 清空 loader 的 queue
   loader._queue = [];
 
   // If a maxBatchSize was provided and the queue is longer, then segment the
   // queue into multiple batches, otherwise treat the queue as a single batch.
+  // maxBatchSize 限制每次处理的个数, 一次只处理一段, 超出的就不要了
   var maxBatchSize = loader._options && loader._options.maxBatchSize;
   if (maxBatchSize && maxBatchSize > 0 && maxBatchSize < queue.length) {
     for (var i = 0; i < queue.length / maxBatchSize; i++) {
@@ -240,6 +259,7 @@ function dispatchQueue<K, V>(loader: DataLoader<K, V>) {
       );
     }
   } else {
+    // 如果 maxBatchSize 大于 queue 的长度, 就直接都处理了
     dispatchQueueBatch(loader, queue);
   }
 }
@@ -317,9 +337,12 @@ function getValidCacheMap<K, V>(
   options: ?Options<K, V>
 ): CacheMap<K, Promise<V>> {
   var cacheMap = options && options.cacheMap;
+  // 如果没有配置自定义的 cacheMap 则使用 Map 对象 
   if (!cacheMap) {
     return new Map();
   }
+  // 检测传入的 cacheMap 对象是否具有下面这几个方法
+  // 并提示缺了什么方法
   var cacheFunctions = [ 'get', 'set', 'delete', 'clear' ];
   var missingFunctions = cacheFunctions
     .filter(fnName => cacheMap && typeof cacheMap[fnName] !== 'function');
@@ -328,6 +351,7 @@ function getValidCacheMap<K, V>(
       'Custom cacheMap missing methods: ' + missingFunctions.join(', ')
     );
   }
+  // 如果上面 throw error 了, 就不会走到这里
   return cacheMap;
 }
 
