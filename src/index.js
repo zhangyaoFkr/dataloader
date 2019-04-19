@@ -107,11 +107,14 @@ class DataLoader<K, V> {
       // Determine if a dispatch of this queue should be scheduled.
       // A single dispatch should be scheduled per queue at the time when the
       // queue changes from "empty" to "full".
-      // 这里我的理解是 当调用了 load 方法, 这里必然长度是 1, 而 dispatchQueue 会把当前的 queue 消化掉 (queue 中可能有多个)
+      // 这里我的理解是 当调用了 load 方法, 这里必然长度是 1
+      // 而 dispatchQueue 会把当前的 queue 消化掉 (queue 中可能有多个)
       // 但是 load 肯定是一个一个执行的
-      // 所以如果开启了批处理, 在一个时钟周期 (事件循环) 内加入 queue 的都会被处理, 从而达到了 '批' 的目的
+      // 所以如果开启了批处理, 在一个事件循环 内加入 queue 的都会被处理, 从而达到了 '批' 的目的
       if (this._queue.length === 1) {
-        // 在 node 的下一个时钟周期 nextTick (setImmediate | setTimeout) 去把队里中的东西处理
+        // 在 node 的循环中 (nextTick | setImmediate | setTimeout) 去把队里中的东西处理
+        // process.nextTick 的回调在本轮循环执行, 即同步任务一旦执行完成，就开始执行它们
+        // setImmediate & setTimeout 追加在次轮循环
         if (shouldBatch) {
           // If batching, schedule a task to dispatch the queue.
           enqueuePostPromiseJob(() => dispatchQueue(this));
@@ -337,7 +340,7 @@ function getValidCacheMap<K, V>(
   options: ?Options<K, V>
 ): CacheMap<K, Promise<V>> {
   var cacheMap = options && options.cacheMap;
-  // 如果没有配置自定义的 cacheMap 则使用 Map 对象 
+  // 如果没有配置自定义的 cacheMap 则使用 Map 对象
   if (!cacheMap) {
     return new Map();
   }
